@@ -14,5 +14,15 @@ spec:
         service: keda-redis-external-scaler
     spec:
       containers:
-      - image: patnaikshekhar/redisexternalscaler:1
+      - image: patnaikshekhar/redisexternalscaler:1.2
         name: scaler
+        env:
+        - name: CERT_PATH
+          value: /certs
+        volumeMounts:
+        - name: certs
+          mountPath: /certs
+      volumes:
+      - name: certs
+        secret:
+          secretName: keda-redis-external-scaler

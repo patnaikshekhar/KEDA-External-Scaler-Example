@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 
 	log "github.com/Sirupsen/logrus"
@@ -11,6 +12,7 @@ import (
 	empty "github.com/golang/protobuf/ptypes/empty"
 	pb "github.com/patnaikshekhar/keda_external_scaler/externalscaler"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
 const (
@@ -22,14 +24,24 @@ const (
 )
 
 func main() {
-	lis, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
 
+	lis, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
 	if err != nil {
 		panic(err)
 	}
 
-	server := grpc.NewServer()
+	certBasePath := os.Getenv("CERT_PATH")
+	certFile := fmt.Sprintf("%s/server.crt", certBasePath)
+	keyFile := fmt.Sprintf("%s/server.key", certBasePath)
+
+	creds, err := credentials.NewServerTLSFromFile(certFile, keyFile)
+	if err != nil {
+		panic(err)
+	}
+
+	server := grpc.NewServer(grpc.Creds(creds))
 	pb.RegisterExternalScalerServer(server, &RedisExternalScalerServer{})
+	log.Println("Starting server")
 	server.Serve(lis)
 }
 
@@ -58,6 +70,7 @@ func (s *RedisExternalScalerServer) New(ctx context.Context, request *pb.NewRequ
 	}
 
 	name := getScalerUniqueName(request.ScaledObjectRef)
+	log.Printf("New() method called for %s", name)
 
 	scaler, err := parseRedisMetadata(request.Metadata)
 	if err != nil {
@@ -65,7 +78,9 @@ func (s *RedisExternalScalerServer) New(ctx context.Context, request *pb.NewRequ
 	}
 
 	s.scalers[name] = scaler
-	log.Println(s.scalers["default/sample"])
+
+	log.Printf("New() method completed for %s", name)
+
 	return &empty.Empty{}, nil
 }
 
@@ -73,10 +88,13 @@ func (s *RedisExternalScalerServer) New(ctx context.Context, request *pb.NewRequ
 func (s *RedisExternalScalerServer) Close(ctx context.Context, request *pb.ScaledObjectRef) (*empty.Empty, error) {
 
 	name := getScalerUniqueName(request)
+	log.Printf("Close() method called for %s", name)
 
 	if _, ok := s.scalers[name]; ok {
 		delete(s.scalers, name)
 	}
+
+	log.Printf("Close() method completed for %s", name)
 
 	return &empty.Empty{}, nil
 }
@@ -117,6 +135,7 @@ func parseRedisMetadata(metadata map[string]string) (*RedisScaler, error) {
 func (s *RedisExternalScalerServer) IsActive(ctx context.Context, request *pb.ScaledObjectRef) (*pb.IsActiveResponse, error) {
 
 	name := getScalerUniqueName(request)
+	log.Printf("IsActive() method called for %s", name)
 
 	if scalerRef, ok := s.scalers[name]; ok {
 		result, err := getRedisListLength(
@@ -125,6 +144,8 @@ func (s *RedisExternalScalerServer) IsActive(ctx context.Context, request *pb.Sc
 		if err != nil {
 			return nil, err
 		}
+
+		log.Printf("IsActive() method Completed for %s", name)
 
 		return &pb.IsActiveResponse{
 			Result: result > 0,
@@ -139,12 +160,15 @@ func (s *RedisExternalScalerServer) IsActive(ctx context.Context, request *pb.Sc
 func (s *RedisExternalScalerServer) GetMetricSpec(ctx context.Context, request *pb.ScaledObjectRef) (*pb.GetMetricSpecResponse, error) {
 
 	name := getScalerUniqueName(request)
+	log.Printf("GetMetricSpec() method called for %s", name)
 
 	if scalerRef, ok := s.scalers[name]; ok {
 		spec := pb.MetricSpec{
 			MetricName: listLengthMetricName,
 			TargetSize: int64(scalerRef.listLength),
 		}
+
+		log.Printf("GetMetricSpec() method completed for %s", name)
 
 		return &pb.GetMetricSpecResponse{
 			MetricSpecs: []*pb.MetricSpec{&spec},
@@ -158,6 +182,8 @@ func (s *RedisExternalScalerServer) GetMetricSpec(ctx context.Context, request *
 func (s *RedisExternalScalerServer) GetMetrics(ctx context.Context, request *pb.GetMetricsRequest) (*pb.GetMetricsResponse, error) {
 
 	name := getScalerUniqueName(request.ScaledObjectRef)
+	log.Printf("GetMetrics() method called for %s", name)
+
 	if scalerRef, ok := s.scalers[name]; ok {
 		listLen, err := getRedisListLength(ctx, scalerRef.address, scalerRef.password, scalerRef.listName)
 
@@ -169,6 +195,8 @@ func (s *RedisExternalScalerServer) GetMetrics(ctx context.Context, request *pb.
 			MetricName:  listLengthMetricName,
 			MetricValue: listLen,
 		}
+
+		log.Printf("GetMetrics() method completed for %s", name)
 
 		return &pb.GetMetricsResponse{
 			MetricValues: []*pb.MetricValue{&value},
